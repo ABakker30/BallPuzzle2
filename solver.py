@@ -11,8 +11,8 @@
 # Files written:
 #   .\results\<ContainerName>.world.json
 #   .\results\<ContainerName>.world_layers.txt
-#   .\logs\progress.jsonl  (streaming snapshots every 5s)
-#   .\logs\progress.json   (final snapshot at end)
+#   .\logs\progress.jsonl  (streaming snapshots every 5s, includes best_depth)
+#   .\logs\progress.json   (final snapshot at end, includes best_depth)
 #
 # World coords follow your example:
 #   u = j + k, v = i + k, w = i + j
@@ -231,13 +231,14 @@ def write_world_layers(container_cells, engine, r: float, dst_path: str):
     with open(dst_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
 
-# ---------- final progress writer ----------
-def write_final_progress(engine, status: str):
+# ---------- final progress writer (includes best_depth) ----------
+def write_final_progress(engine, status: str, best_depth: int):
     # status: "solved" or "exhausted"
     t = max(engine.elapsed_seconds(), 1e-9)
     snap = {
         "status": status,
         "placed": engine.placed_count(),
+        "best_depth": int(best_depth),
         "total": engine.total_pieces(),
         "attempts": engine.attempts,
         "attempts_per_sec": engine.attempts / t,
@@ -272,36 +273,44 @@ def main():
     last = time.perf_counter()
     tail.append("[start] engine driver")
 
+    # Track the highest placement depth for the run
+    best_depth = 0
     solved = False
 
     while True:
         progressed, solved = engine.step_once()
 
+        # Update best_depth whenever we see a new high-water mark
+        placed_now = engine.placed_count()
+        if placed_now > best_depth:
+            best_depth = placed_now
+
         now = time.perf_counter()
         if now - last >= 5.0:
             rate = engine.attempts / max(engine.elapsed_seconds(), 1e-9)
             snap = {
-                "placed": engine.placed_count(),
+                "placed": placed_now,
+                "best_depth": int(best_depth),
                 "total": engine.total_pieces(),
                 "attempts": engine.attempts,
                 "attempts_per_sec": rate,
                 "elapsed_sec": engine.elapsed_seconds()
             }
             line = json.dumps(snap, separators=(",", ":"))
-            print(f"[{snap['elapsed_sec']:7.2f}s] placed={snap['placed']}/{snap['total']} attempts={snap['attempts']} rate={rate:,.0f}/s")
+            print(f"[{snap['elapsed_sec']:7.2f}s] placed={snap['placed']}/{snap['total']} best={snap['best_depth']} attempts={snap['attempts']} rate={rate:,.0f}/s")
             progress.write(line + "\n"); progress.flush()
             tail.append(line)
             last = now
 
         if solved:
             tail.append("[done] solved")
-            write_final_progress(engine, "solved")
+            write_final_progress(engine, "solved", best_depth)
             break
 
         # Exhaust detection: no progress, at root, nothing placed
         if (not progressed) and engine.cursor == 0 and not engine.placements:
             tail.append("[done] exhausted")
-            write_final_progress(engine, "exhausted")
+            write_final_progress(engine, "exhausted", best_depth)
             break
 
     progress.close()
