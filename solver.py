@@ -268,6 +268,11 @@ def main():
     # Init + run with 5s progress
     engine = SolverEngine(pieces, valid_set)
 
+    # ---- minimal addition: enable hole-%4 prune via CLI flag ----
+    if any(arg in sys.argv for arg in ("--hole4", "--hole-mod4")):
+        setattr(engine, "hole_mod4", True)
+    # -------------------------------------------------------------
+
     progress = open(PROGRESS_PATH, "a", encoding="utf-8")
     tail = deque(maxlen=256)
     last = time.perf_counter()

@@ -32,6 +32,9 @@ DEFAULT_LEAF_WEIGHT              = 0.8
 # Corridor gating (rev13.2)
 DEFAULT_DEG2_CORRIDOR = False  # keep degree-2 corridors OFF unless explicitly enabled
 
+# ---- minimal addition: default toggle for hole-%4 prune ----
+DEFAULT_HOLE_MOD4_DETECT = False
+# ------------------------------------------------------------
 
 # FCC adjacency (12-neighbor)
 _NEIGH = (
@@ -79,6 +82,10 @@ class SolverEngine:
         self.LEAF_WEIGHT              = DEFAULT_LEAF_WEIGHT
         self.deg2_corridor     = DEFAULT_DEG2_CORRIDOR
 
+        # ---- minimal addition: runtime toggle for hole-%4 prune ----
+        self.hole_mod4         = DEFAULT_HOLE_MOD4_DETECT
+        # ------------------------------------------------------------
+
         # Grid
         (self.idx2cell,
          self.cell2idx,
@@ -117,7 +124,7 @@ class SolverEngine:
 
         # Histograms / counters
         self.stat_pruned_isolated = 0
-        self.stat_pruned_cavity   = 0  # reserved
+        self.stat_pruned_cavity   = 0  # used for hole-%4 prunes
         self.stat_considered      = 0
 
         self.stat_exposure_hist = defaultdict(int)
@@ -303,6 +310,31 @@ class SolverEngine:
     # --------------------------
     # Pruning helpers
     # --------------------------
+
+    # ---- minimal addition: %4 hole check over connected empty components ----
+    def _empties_mod4_ok(self, occ_after: int) -> bool:
+        N = len(self.idx2cell)
+        neighbors = self.neighbors
+        seen = [False] * N
+        for i in range(N):
+            if ((occ_after >> i) & 1) != 0 or seen[i]:
+                continue
+            # BFS this empty component
+            q = [i]
+            seen[i] = True
+            size = 0
+            while q:
+                u = q.pop()
+                size += 1
+                for v in neighbors[u]:
+                    if ((occ_after >> v) & 1) == 0 and not seen[v]:
+                        seen[v] = True
+                        q.append(v)
+            if (size & 3) != 0:  # not divisible by 4
+                return False
+        return True
+    # ------------------------------------------------------------------------
+
     def _creates_isolated_empty(self, occ_after: int, touched_idxs: Tuple[int, ...]) -> bool:
         neighbors = self.neighbors
         to_check = set()
@@ -395,6 +427,12 @@ class SolverEngine:
             if self._creates_isolated_empty(occ_after, cells_idx):
                 self.stat_pruned_isolated += 1
                 return
+
+            # ---- minimal addition: prune if any empty component size % 4 != 0 ----
+            if self.hole_mod4 and not self._empties_mod4_ok(occ_after):
+                self.stat_pruned_cavity += 1
+                return
+            # ----------------------------------------------------------------------
 
             e, be = self._exposure_counts_after(occ_after, cells_idx)
             l     = self._leaf_empties_after(occ_after, cells_idx)
